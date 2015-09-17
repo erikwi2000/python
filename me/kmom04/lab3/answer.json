@@ -1,0 +1,114 @@
+{
+    "details":  "Generated for bjvi13 at 2015-09-12 07:28:24.",
+    "key":      "bfe8a224a603df022b875553616e610b",
+    "answers":  {
+        		"1.1":		[
+    "Berenger",
+    "fly",
+    "desk",
+    "bass"
+],
+		"1.2":		[
+    "flute",
+    "icecream",
+    "money",
+    "guitar",
+    "drums",
+    "piano",
+    "bass"
+],
+		"1.3":		[
+    "flute",
+    "guitar",
+    "potato",
+    "piano",
+    "bass"
+],
+		"1.4":		[
+    "bobcat",
+    "cougar",
+    "lion",
+    "ozelot",
+    "tiger"
+],
+		"1.5":		[
+    "tiger",
+    "ozelot",
+    "lion",
+    "cougar",
+    "bobcat"
+],
+		"1.6":		[
+    "guitar",
+    "bass"
+],
+		"1.7":		[
+    "lion",
+    "ozelot",
+    "bobcat",
+    "cougar"
+],
+		"2.1":		645,
+		"2.2":		95.2,
+		"2.3":		7,
+		"2.4":		"The snow is falling",
+		"2.5":		"goes",
+		"2.6":		[
+    "reggae",
+    "book",
+    "candle",
+    "jazz",
+    "opera"
+],
+		"2.7":		[
+    "reggae",
+    "rock",
+    "blues",
+    "book",
+    "candle"
+],
+		"2.8":		[
+    "reggae",
+    "rock",
+    "blues",
+    "book",
+    "candle",
+    "jazz",
+    "opera"
+],
+		"2.9":		[
+    "mp3",
+    "blu-ray",
+    "vhs",
+    "cd"
+],
+		"2.10":		[
+    "dvd",
+    "vhs",
+    "cd"
+],
+		"2.11":		false,
+		"2.12":		true,
+		"2.13":		[
+    "y",
+    "a",
+    "e",
+    "d",
+    "c"
+],
+		"3.1":		[
+    70,
+    120,
+    230,
+    360,
+    5670
+],
+		"3.2":		[
+    163,
+    133,
+    131,
+    77,
+    12
+]
+    }
+}

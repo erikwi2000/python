@@ -1,0 +1,1120 @@
+#!/bin/bash
+# dbwebb-validate: tool to validate and publish course repos
+#
+# See more: http://dbwebb.se/dbwebb-validate
+#
+# Author: Mikael Roos, mos@dbwebb.se
+#
+# The MIT License (MIT)
+#
+# Copyright (c) 2014-2015 Mikael Roos (mos@dbwebb.se)
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+#
+#
+# Current version
+#
+DBW_VERSION="v1.9.10x (2015-08-27)"
+# --------------- DBWEBB FUNCTIONS PHASE START ---------------
+
+#
+# Does key exists in array?
+#
+function exists() {
+    if [ "$2" != in ]; then
+        echo "Incorrect usage."
+        echo "Correct usage: exists {key} in {array}"
+        return
+    fi   
+    eval '[ ${'$3'[$1]+muahaha} ]'
+}
+
+
+
+#
+# Check if array contains a value
+#
+function contains() {
+    local e
+    for e in "${@:2}"; do [[ "$e" == "$1" ]] && return 0; done
+    return 1
+}
+
+
+
+#
+# Join elements with separator
+# join , a "b c" d #a,b c,d
+# join / var local tmp #var/local/tmp
+# join , "${FOO[@]}" #a,b,c
+#
+function join()
+{ 
+    local IFS="$1"; 
+    shift; 
+    echo "$*";
+}
+
+
+
+#
+# Get the url to GitHub for a repo
+#
+function createGithubUrl(){
+    echo "https://github.com/mosbth/$1$2"
+}
+
+
+
+#
+# Check for installed commands
+#
+function checkCommand()
+{
+    local COMMAND="$1"
+
+    if ! hash "$COMMAND" 2>/dev/null; then
+        printf "Command $COMMAND not found."
+    else 
+        printf "$( which $COMMAND )"
+    fi
+}
+
+
+
+#
+# Execute a command in a controlled manner
+#
+#function wget {
+#  if command wget -h &>/dev/null
+#  then
+#    command wget "$@"
+#  else
+#    set "${*: -1}"
+#    lynx -source "$1" > "${1##*/}"
+#  fi
+#}
+
+
+
+#
+# Press enter to continue
+#
+pressEnterToContinue()
+{
+    printf "\nPress enter to continue..."
+    read void
+}
+
+
+
+#
+# Execute a command in a controlled manner
+#
+executeCommand()
+{
+    INTRO="$1"
+
+    if [[ ! $SKIP_READLINE ]]
+    then
+        printf "$INTRO"
+        pressEnterToContinue
+    fi
+
+    REALLY="$4"
+    if [ ! -z $REALLY ]
+    then
+        printf "\nAre you really sure? [yN] "
+        read answer
+        default="n"
+        answer=${answer:-$default}
+
+        if [ ! \( "$answer" = "y" -o "$answer" = "Y" \) ]
+        then
+            printf "Exiting...\n"
+            exit 0
+        fi
+    fi
+
+    COMMAND="$2"
+
+    if [[ $VERY_VERBOSE ]]
+    then
+        printf "\nExecuting command:"
+        printf "\n$COMMAND"
+        printf "\n-----------------------------------------"
+        printf "\n"
+    fi
+
+    bash -c "$COMMAND"
+    STATUS=$?
+
+    if [[ $VERY_VERBOSE ]]
+    then
+        printf "\n-----------------------------------------"
+        printf "\n"
+    fi
+
+    MESSAGE=$3
+    if [ $STATUS = 0 ]
+    then
+        printf "$MSG_DONE $MESSAGE"
+    else
+        printf "$MSG_FAILED $MESSAGE"
+    fi
+    printf "\n"
+
+    return $STATUS
+}
+
+
+
+#
+# Check if within a valid course repo or exit
+#
+function checkIfValidCourseRepoOrExit()
+{
+    if [ "$DBW_COURSE_REPO_VALID" != "yes" ]; then
+        printf "$MSG_FAILED Could not find file '$DBW_COURSE_FILE_NAME', this is not a valid course repo."
+        printf "\nThis command must be executed within a valid course repo."
+        printf "\n"
+        exit 1
+    fi
+}
+
+
+
+#
+# Check if config file or exit
+#
+function checkIfValidConfigOrExit()
+{
+    if [ ! -f "$DBW_CONFIG_FILE" ]; then
+        printf "$MSG_FAILED Could not find the configuration file '$DBW_CONFIG_FILE', this is needed for this operation."
+        printf "\n"
+        exit 1
+    fi
+}
+
+
+
+#
+# Set proper rights for files and directories
+#
+setChmod()
+{
+    if [[ $VERY_VERBOSE ]]; then
+        printf "Ensuring that all files and directories are readable for all, below $DBW_COURSE_DIR.\n"
+    fi
+
+    find "$DBW_COURSE_DIR" -type d -exec chmod u+rwx,go+rx {} \;  
+    find "$DBW_COURSE_DIR" -type f -exec chmod u+rw,go+r {} \;   
+}
+
+
+
+#
+# Convert course specific module to path on disk
+#
+mapCmdToDir()
+{
+    local CMD="$1"
+    local RES=""
+
+    if [ -z "$CMD" ]; then 
+        return
+    fi 
+
+    case "$CMD" in
+        example)    RES="example" ;;
+        tutorial)   RES="tutorial" ;;
+        me)         RES="me" ;;
+        redovisa)   RES="me/redovisa" ;;
+        kmom01)     RES="me/kmom01" ;;
+        kmom02)     RES="me/kmom02" ;;
+        kmom03)     RES="me/kmom03" ;;
+        kmom04)     RES="me/kmom04" ;;
+        kmom05)     RES="me/kmom05" ;;
+        kmom06)     RES="me/kmom06" ;;
+        kmom10)     RES="me/kmom10" ;;
+    esac
+
+    if [ ! -z $RES ]; then 
+        printf "$RES"
+        return
+    fi 
+
+    case "$DBW_COURSE" in
+        htmlphp)
+            case "$CMD" in
+                me1)        RES="me/kmom01/me1" ;;
+                me2)        RES="me/kmom02/me2" ;;
+                me3)        RES="me/kmom03/me3" ;;
+                me4)        RES="me/kmom04/me4" ;;
+                me5)        RES="me/kmom05/me5" ;;
+                me6)        RES="me/kmom06/me6" ;;
+                
+                multi)      RES="me/kmom03/multi" ;;
+                stylechooser) RES="me/kmom04/stylechooser" ;;
+                jetty)      RES="me/kmom05/jetty" ;;
+                
+                lab1)       RES="me/kmom02/lab1" ;;
+                lab2)       RES="me/kmom03/lab2" ;;
+                lab3)       RES="me/kmom04/lab3" ;;
+                lab4)       RES="me/kmom05/lab4" ;;
+                lab5)       RES="me/kmom06/lab5" ;;
+            esac
+            ;;
+
+        python)
+            case "$CMD" in
+                hello)      RES="me/kmom01/hello" ;;
+                plane)      RES="me/kmom01/plane" ;;
+
+                lab1)       RES="me/kmom02/lab1" ;;
+                lab2)       RES="me/kmom03/lab2" ;;
+                lab3)       RES="me/kmom04/lab3" ;;
+                lab4)       RES="me/kmom05/lab4" ;;
+                lab5)       RES="me/kmom06/lab5" ;;
+                lab6)       RES="me/kmom06/lab6" ;;
+
+                marvin1)    RES="me/kmom02/marvin1" ;;
+                marvin2)    RES="me/kmom03/marvin2" ;;
+                marvin3)    RES="me/kmom04/marvin3" ;;
+                marvin4)    RES="me/kmom05/marvin4" ;;
+                marvin5)    RES="me/kmom06/marvin5" ;;
+
+                game1)      RES="me/kmom04/game1" ;;
+                game2)      RES="me/kmom05/game2" ;;
+                game3)      RES="me/kmom06/game3" ;;
+
+                adventure)  RES="me/kmom10/adventure" ;;
+            esac
+            ;;
+
+        javascript1)
+            case "$CMD" in
+                sandbox)      RES="me/kmom01/sandbox" ;;
+                hangman)      RES="me/kmom06/hangman" ;;
+                intelligence) RES="me/kmom10/intelligence" ;;
+
+                lab1)       RES="me/kmom02/lab1" ;;
+                lab2)       RES="me/kmom03/lab2" ;;
+                lab3)       RES="me/kmom04/lab3" ;;
+                lab4)       RES="me/kmom04/lab4" ;;
+                lab5)       RES="me/kmom05/lab5" ;;
+
+                flag1)      RES="me/kmom02/flag1" ;;
+                flag2)      RES="me/kmom03/flag2" ;;
+                flag3)      RES="me/kmom04/flag3" ;;
+                flag4)      RES="me/kmom05/flag4" ;;
+                flag5)      RES="me/kmom06/flag5" ;;
+
+                baddie1)    RES="me/kmom02/baddie1" ;;
+                baddie2)    RES="me/kmom03/baddie2" ;;
+                baddie3)    RES="me/kmom04/baddie3" ;;
+                #baddie4)    RES="me/kmom05/baddie4" ;;
+                #baddie5)    RES="me/kmom06/baddie5" ;;
+            esac
+            ;;
+
+        linux)
+            case "$CMD" in
+                install)    RES="me/kmom01/install" ;;
+                vhosts)     RES="me/kmom02/vhosts" ;;
+                mysite)     RES="me/kmom02/mysite" ;;
+                irc)        RES="me/kmom03/irc" ;;
+                script)     RES="me/kmom03/script" ;;
+                javascripting) RES="me/kmom04/javascripting" ;;
+                server)     RES="me/kmom04/server" ;;
+            esac
+            ;;
+
+        webapp)
+            case "$CMD" in
+                lab1)       RES="me/kmom02/lab1" ;;
+                lab2)       RES="me/kmom03/lab2" ;;
+                lab3)       RES="me/kmom04/lab3" ;;
+                lab4)       RES="me/kmom05/lab4" ;;
+                lab5)       RES="me/kmom06/lab5" ;;
+            esac
+            ;;
+
+        webgl)
+            case "$CMD" in
+                #lab1)       RES="me/kmom02/lab1" ;;
+                #lab2)       RES="me/kmom03/lab2" ;;
+                #lab3)       RES="me/kmom04/lab3" ;;
+                #lab4)       RES="me/kmom05/lab4" ;;
+                #lab5)       RES="me/kmom06/lab5" ;;
+                *)          NO_RES="Not implemented"
+            esac
+            ;;
+    esac
+
+    echo "$RES"
+    return
+}
+
+
+
+#
+# Get path to dir to check, use both parts of courses and fallback
+# to absolute and relative paths.
+#
+function getPathToDirectoryFor()
+{
+    local dir="$( mapCmdToDir $1 )" 
+    
+    if [ -z "$command" ]; then
+        echo "$DBW_CURRENT_DIR"
+    elif [ -z "$dir" -a -d "$command" ]; then
+        echo "$command"
+    elif [ -z "$dir" -a -d "$DBW_CURRENT_DIR/$command" ]; then
+        echo "$DBW_CURRENT_DIR/$command"
+    elif [ -d "$DBW_COURSE_DIR" -a -d "$DBW_COURSE_DIR/$dir" ]; then
+        echo "$DBW_COURSE_DIR/$dir"
+    else 
+        printf "\n$MSG_FAILED The item '$command' was mapped to directory '$dir' which is not a valid directory."
+        printf "\n"
+        exit 1
+    fi
+}
+
+
+
+#
+# Validate the uploaded files
+#
+createUploadDownloadPaths()
+{
+    SUBDIR="$( mapCmdToDir $ITEM )"
+
+    if [ -z "$WHAT" -o -z "$WHERE" ]; then
+        printf "$MSG_FAILED Missing argument for source or destination. Perhaps re-create the config-file?"
+        printf "\n\n"
+        exit 1
+    fi
+
+    #if [ -d "$DBW_CURRENT_DIR/$ITEM" ]; then
+    #    SUBDIR="${ITEM%/}"
+    #elif [ ! -z "$ITEM" -a -z "$SUBDIR" ]; then
+    if [ ! -z "$ITEM" -a -z "$SUBDIR" ]; then
+        printf "\n$MSG_FAILED Not a valid combination course: '$DBW_COURSE' and item: '$ITEM'."
+        printf "\n\n"
+        exit 1
+    fi
+
+    if [ ! -z "$SUBDIR" ]; then
+        WHAT="$WHAT/$SUBDIR/"
+        WHERE="$WHERE/$SUBDIR/"
+    else
+        WHAT="$WHAT/"
+        WHERE="$WHERE/"
+    fi
+
+    if [ ! -d "$WHAT" ]; then
+        printf "\n$MSG_FAILED Target directory is not a valid directory: '$WHAT'"
+        printf "\n\n"
+        exit 1
+    fi
+}
+
+
+
+#
+# Selfupdate
+#
+selfupdate()
+{
+    local what="$1"
+    local target="$DBW_EXECUTABLE_PATH"
+    local remote=
+    local silent="--quiet"
+    local repo="https://raw.githubusercontent.com/mosbth/dbwebb-cli"
+    
+    if [[ $VERY_VERBOSE ]]; then
+        silent=""
+    fi
+    
+    case $what in
+        dbwebb)
+            remote="$repo/master/dbwebb2"
+        ;;
+        
+        dbwebb-validate)
+            remote="$repo/master/dbwebb2-validate"
+        ;;
+        
+        dbwebb-inspect)
+            remote="$repo/master/dbwebb2-inspect"
+        ;;
+    esac
+    
+    printf "Your current version is: "
+    $what --version
+
+    local intro="Selfupdating '$what' from $repo"
+    local cmd="printf 'Downloading...'; wget $silent $remote -O /tmp/$$; printf ' installing...'; install /tmp/$$ $target; printf ' cleaning up...'; rm /tmp/$$; printf ' done.\n'"
+    local message="to update '$what'."
+    executeCommand "$intro" "$cmd" "$message"
+        
+    printf "The updated version is now: "
+    $what --version
+}
+
+
+
+#
+# Perform an assert
+#
+function assert()
+{
+    EXPECTED=$1
+    TEST=$2
+    MESSAGE=$3
+    ASSERTS=$(( $ASSERTS + 1 ))
+    local onlyExitStatus=$4
+    local error=
+    local status=
+
+    bash -c "$TEST" &> "$TMPFILE"
+    status=$?
+    
+    if [ \( -z "$onlyExitStatus" \) -o \( ! $status -eq $EXPECTED \) ]; then
+        error=$( cat "$TMPFILE" )
+    fi
+    rm -f "$TMPFILE"
+
+    if [ \( ! $status -eq $EXPECTED \) -o \( ! -z "$error" \) ]; then
+        FAULTS=$(( $FAULTS + 1 ))
+
+        printf "\n\n$MSG_WARNING $MESSAGE\n" 
+        [ -z "$error" ] || printf "$error\n\n"
+    fi
+
+    return $status
+}
+
+
+
+#
+# Perform an assert on exit value returned
+# TODO Check if this is really needed by python inspect
+#
+assertExit()
+{
+    EXPECTED=$1
+    TEST=$2
+    MESSAGE=$3
+    ASSERTS=$(( $ASSERTS + 1 ))
+
+    bash -c "$TEST" &> "$TMPFILE"
+    STATUS=$?
+    ERROR=$( cat "$TMPFILE" )
+    rm -f "$TMPFILE"
+
+    if [ $STATUS -ne $EXPECTED ]; then
+        FAULTS=$(( $FAULTS + 1 ))
+
+        printf "\n$TEST"
+        printf "\n\n$MSG_FAILED $MESSAGE\n" 
+        [ -z "$ERROR" ] || printf "$ERROR\n\n"
+
+        return 1
+    fi
+
+    return 0
+}
+
+
+
+
+#
+# Clean up and output results from asserts
+#
+function assertResults()
+{
+    if [ $FAULTS -gt 0 ]
+        then
+        printf "\n\n$MSG_FAILED"
+        printf " Asserts: $ASSERTS Faults: $FAULTS\n\n"
+        exit 1
+    fi
+    
+    printf "\n$MSG_OK"
+    printf " Asserts: $ASSERTS Faults: $FAULTS\n"
+    exit 0
+}
+
+
+
+# --------------- DBWEBB FUNCTIONS PHASE END ---------------
+# --------------- DBWEBB BOOTSTRAP PHASE START ---------------
+
+# Messages
+MSG_OK="\033[0;30;42mOK\033[0m"
+MSG_DONE="\033[1;37;40mDONE\033[0m"
+MSG_WARNING="\033[43mWARNING\033[0m"
+MSG_FAILED="\033[0;37;41mFAILED\033[0m"
+
+# For asserts
+ASSERTS=0
+FAULTS=0
+TMPFILE="/tmp/dbwebb-error-{$USER}-$$"
+
+
+
+#
+# Find my environment, before any work can be done
+#
+
+
+# What was the command issued?
+DBW_EXECUTABLE_PATH="$0"
+DBW_EXECUTABLE="$( basename "$0" )"
+
+# Where is the executable
+DBW_EXECUTABLE_DIR="$( dirname "$0" )"
+
+# What is the current directory
+DBW_CURRENT_DIR="$( pwd )"
+
+
+
+# What is the directory of the current course repo, find recursivly up the tree
+DBW_COURSE_FILE_NAME=".dbwebb.course"
+
+dir="$DBW_CURRENT_DIR/."
+while [ "$dir" != "/" ]; do
+    dir=$( dirname "$dir" )
+    found="$( find "$dir" -maxdepth 1 -name $DBW_COURSE_FILE_NAME )"
+    if [ "$found" ]; then 
+        DBW_COURSE_DIR="$( dirname "$found" )"
+        break
+    fi
+done
+
+
+
+#
+# Get the name of the course as $DBW_COURSE
+#
+function sourceCourseRepoFile()
+{
+    DBW_COURSE_FILE="$DBW_COURSE_DIR/$DBW_COURSE_FILE_NAME"
+    DBW_COURSE_REPO_VALID=""
+    if [ -f "$DBW_COURSE_FILE" ]; then
+        DBW_COURSE_REPO_VALID="yes"
+        source "$DBW_COURSE_FILE"
+    fi    
+}
+
+# Get the name of the course as $DBW_COURSE
+sourceCourseRepoFile
+
+
+
+# Where is the .dbwebb.config-file
+DBW_CONFIG_FILE_NAME=".dbwebb.config"
+
+# Check if run as sudo, use SUDO_USER as HOME (only for selfupdate)
+if [[ $SUDO_USER ]]; then
+    DBW_CONFIG_FILE=$( eval echo "~$SUDO_USER/$DBW_CONFIG_FILE_NAME" )
+else    
+    DBW_CONFIG_FILE="$HOME/$DBW_CONFIG_FILE_NAME"
+fi
+
+if [ -f "$DBW_CONFIG_FILE" ]; then
+    source "$DBW_CONFIG_FILE"
+fi
+
+
+
+# Detect if ssh-key is available
+DBW_SSH_KEY_OPTION=""
+if [ -f "$DBW_SSH_KEY" ]
+then
+    DBW_SSH_KEY_OPTION="-i '$DBW_SSH_KEY'"
+fi
+
+
+
+# Check OS
+DBW_OS="$( uname -a )"
+
+# Create the ssh-command with details from the config-file
+SSH_CMD="ssh ${DBW_USER}@${DBW_HOST} $DBW_SSH_KEY_OPTION"
+
+# Create the basis for the upload command
+RSYNC_CMD="rsync -av --delete --exclude .git --exclude .gitignore --exclude literature --exclude tutorial --exclude .default -e \"ssh $DBW_SSH_KEY_OPTION\""
+RSYNC_DOWNLOAD_CMD="rsync -avuc -e \"ssh $DBW_SSH_KEY_OPTION\""
+
+DBW_REMOTE_DESTINATION="${DBW_USER}@${DBW_HOST}:$DBW_REMOTE_BASEDIR/$DBW_COURSE"
+DBW_REMOTE_WWW_DESTINATION="${DBW_USER}@${DBW_HOST}:$DBW_REMOTE_WWWDIR/$DBW_COURSE"
+
+DBW_WWW="http://dbwebb.se/"
+DBW_VALIDATE_CONFIGFILE="/home/saxon/students/dbwebb/dbwebb-general-config"
+#DBW_INSPECT_CONFIGFILE="/home/saxon/students/dbwebb/dbwebb-general-config"
+DBW_ARCHIVE="/home/saxon/students/dbwebb/archive/"
+
+
+# Ass arrays not supporter on mac bash v3.
+#declare -A DBW_REPOS
+#DBW_REPOS[python]="https://github.com/mosbth/python"
+#DBW_REPOS[javascript1]="https://github.com/mosbth/javascript1"
+#DBW_REPOS[linux]="https://github.com/mosbth/linux"
+#DBW_REPOS[webapp]="https://github.com/mosbth/webapp"
+#DBW_REPOS[htmlphp]="https://github.com/mosbth/htmlphp"
+DBW_COURSE_REPOS=( 'python' 'javascript1' 'linux' 'webapp' 'htmlphp' 'webgl' )
+DBW_REPO="dbwebb-cli"
+
+
+# --------------- DBWEBB BOOTSTRAP PHASE END ---------------
+function usage ()
+{
+    local txt=(
+"Utility dbwebb-validate for working with course repos: http://dbwebb.se/dbwebb-validate"
+"Usage: dbwebb-validate [options] [item]"
+""
+"Item:"
+"  Any of the exercises for a course, example:"
+"  - kmom01, kmom02, ..., kmom10"
+"  - me, tutorial, example"
+"  or relative path,"
+"  or absolute path"
+""
+"Options:"
+"  --check, -c         Check installed tools."
+"  --selfupdate        Update to latest version."
+"  --dry, -d           Dry run, only display."
+"  --only extension    Only test for extension."
+"  --course-repo path  Use this path as course repo."
+"  --publish, -p       Publish it."
+"  --publish-to path   Path where to publish."
+"  --help, -h          Print help."
+"  --version, -v       Print version."
+    )
+    printf "%s\n" "${txt[@]}"
+}
+
+
+
+function version ()
+{
+    local txt=(
+"dbwebb-validate version $DBW_VERSION"
+    )
+    printf "%s\n" "${txt[@]}"
+}
+
+
+
+function badUsage ()
+{
+    local message="$1"
+    local txt=(
+"For an overview of the command, execute:"
+"dbwebb-validate --help"
+    )
+    
+    if [ ! -z "$message" ]; then
+        printf "$message\n"
+    fi
+    
+    printf "%s\n" "${txt[@]}"
+}
+# --------------- DBWEBB-VALIDATE MAIN START HERE ---------------
+#
+# External tools
+#
+#HTMLHINT="dbwebb-htmlhint"
+HTMLHINT="htmlhint"
+HTMLHINT_OPTIONS=
+HTMLHINT_CONFIG=
+
+CSSLINT="csslint"
+CSSLINT_OPTIONS="--quiet"
+
+JSHINT="jshint"
+
+JSCS="jscs"
+JSCS_OPTIONS="--verbose"
+
+HTML_MINIFIER="html-minifier"
+
+CLEANCSS="cleancss"
+CLEANCSS_OPTIONS="--s1 --skip-import"
+
+UGLIFYJS="uglifyjs"
+UGLIFYJS_OPTIONS="--mangle --compress --screw-ie8 --comments"
+
+PYLINT="pylint"
+PYLINT_OPTIONS="-r n"
+
+PHP="php"
+PHP_OPTIONS="--syntax-check"
+
+PHPMD="phpmd"
+PHPMD_OPTIONS="text"
+
+PHPCS="phpcs"
+PHPCS_OPTIONS=""
+
+PHPUGLIFY=""
+
+PHPMINIFY="php"
+PHPMINIFY_OPTIONS="--strip"
+
+CHECKBASH="shellcheck"
+CHECKBASH_OPTIONS="--shell=bash"
+
+CHECKSH="shellcheck"
+CHECKSH_OPTIONS="--shell=sh"
+
+#YAML="dbwebb-js-yaml"
+#YAML_OPTIONS="--silent"
+YAML="js-yaml"
+YAML_OPTIONS=""
+
+
+
+#
+# Set default configurations
+#
+function setDefaultConfigFiles()
+{
+    if [[ $DBW_COURSE_DIR ]]; then
+        if [ -f "$DBW_COURSE_DIR/.htmlhintrc" ]; then
+            HTMLHINT_CONFIG="--config '$DBW_COURSE_DIR/.htmlhintrc'"
+        fi
+        
+        HTML_MINIFIER_CONFIG="--config-file '$DBW_COURSE_DIR/.html-minifier.conf'"
+        PYLINT_CONFIG="--rcfile '$DBW_COURSE_DIR/.pylintrc'"
+        PHPMD_CONFIG="'$DBW_COURSE_DIR/.phpmd.xml'"
+        PHPCS_CONFIG="--standard='$DBW_COURSE_DIR/.phpcs.xml'"
+        
+        if [ -f "$DBW_COURSE_DIR/.csslintrc" ]; then
+            CSSLINT_CONFIG="$DBW_COURSE_DIR/.csslintrc"
+        else
+            CSSLINT_CONFIG="/dev/null"
+        fi
+        
+        JSCS_CONFIG="--config=$DBW_COURSE_DIR/.jscsrc"
+    else
+        PHPMD_CONFIG="cleancode,codesize,controversial,design,naming,unusedcode"
+    fi    
+}
+
+
+
+#
+# Check for installed tools
+#
+function checkInstalledValidateTools
+{
+    printf "Check for installed validation tools.\n"
+    printf " htmlhint:      %s\n" "$( checkCommand $HTMLHINT )"
+    printf " csslint:       %s\n" "$( checkCommand $CSSLINT )"
+    printf " jshint:        %s\n" "$( checkCommand $JSHINT )"
+    printf " jscs:          %s\n" "$( checkCommand $JSCS )"
+    printf " pylint:        %s\n" "$( checkCommand $PYLINT )"
+    printf " php:           %s\n" "$( checkCommand $PHP )"
+    printf " phpmd:         %s\n" "$( checkCommand $PHPMD )"
+    printf " phpcs:         %s\n" "$( checkCommand $PHPCS )"
+    printf " bash:          %s\n" "$( checkCommand $CHECKBASH )"
+    printf " sh:            %s\n" "$( checkCommand $CHECKSH )"
+    printf " yaml:          %s\n" "$( checkCommand $YAML )"
+
+    printf "Check for installed publishing tools.\n"
+    printf " html-minifier: %s\n" "$( checkCommand $HTML_MINIFIER )"
+    printf " cleancss:      %s\n" "$( checkCommand $CLEANCSS )"
+    printf " uglifyjs:      %s\n" "$( checkCommand $UGLIFYJS )"
+    printf " phpminify:     %s\n" "$( checkCommand $PHPMINIFY )"
+    printf " phpuglify:     %s\n" "$( checkCommand $PHPUGLIFY )"
+}
+
+
+
+#
+# Set correct mode on published file and dirs
+#
+publishChmod()
+{
+    local dir="$1"
+
+    if [ -d "$dir" ]; then
+        find "$dir" -type d -exec chmod a+rx {} \;  
+        find "$dir" -type f -exec chmod a+r {} \;   
+        find "$dir" -type f -name '*.py' -exec chmod go-r {} \;
+    fi
+}
+
+
+
+#
+# Perform validation tests
+#
+function validateCommand()
+{
+    local dir="$1"
+    local cmd="$2"
+    local extension="$3"
+    local options="$4"
+    local output="$5"
+    local onlyExitStatus="$6"
+    local counter=0
+
+    if hash "$cmd" 2>/dev/null; then
+        printf "\n *.$extension using $cmd"
+        for filename in $(find "$dir/" -not -path '*/node_modules/*' -type f -name \*.$extension); do
+            if [[ $optDryRun ]]; then
+                printf "\n%s" "$cmd $options $filename $output"
+            else
+                if [ -z $optOnly  ]; then
+                    assert 0 "$cmd $options $filename $output" "$cmd failed: $filename" "$onlyExitStatus"
+                elif [ "$extension" == "$optOnly" ]; then
+                    assert 0 "$cmd $options $filename $output" "$cmd failed: $filename" "$onlyExitStatus"
+                fi
+            fi
+            counter=$(( counter + 1 ))
+            printf "."
+        done
+        printf " ($counter)"
+    else
+        printf "\n *.$extension (skipping - $cmd not installed)"
+    fi
+}
+
+
+
+#
+# Perform validation tests
+#
+function validate()
+{
+    local dir="$1"
+
+    [[ $DISABLE_HTMLHINT ]]  || validateCommand "$dir" "$HTMLHINT" "html" "$HTMLHINT_OPTIONS $HTMLHINT_CONFIG" '| grep -v "No problem."; test ${PIPESTATUS[0]} -eq 0'
+    [[ $DISABLE_CSSLINT ]]   || validateCommand "$dir" "$CSSLINT" "css" "$CSSLINT_OPTIONS $( cat "$CSSLINT_CONFIG" )"
+    [[ $DISABLE_JSHINT ]]    || validateCommand "$dir" "$JSHINT" "js"
+    [[ $DISABLE_JSCS ]]      || validateCommand "$dir" "$JSCS" "js"  "$JSCS_OPTIONS $JSCS_CONFIG" "" "onlyExitStatus"
+    #validateCommand "$dir" "$JSCS" "js" "$JSCS_OPTIONS $JSCS_CONFIG" ""
+    [[ $DISABLE_PYLINT ]]    || validateCommand "$dir" "$PYLINT" "py" "$PYLINT_OPTIONS $PYLINT_CONFIG" 
+    [[ $DISABLE_PYLINT ]]    || validateCommand "$dir" "$PYLINT" "cgi" "$PYLINT_OPTIONS $PYLINT_CONFIG" 
+    [[ $DISABLE_PHP ]]       || validateCommand "$dir" "$PHP" "php" "$PHP_OPTIONS" "> /dev/null"
+    [[ $DISABLE_PHPMD ]]     || validateCommand "$dir" "$PHPMD" "php" "" "$PHPMD_OPTIONS $PHPMD_CONFIG"
+    [[ $DISABLE_PHPCS ]]     || validateCommand "$dir" "$PHPCS" "php" "$PHPCS_OPTIONS $PHPCS_CONFIG"
+    [[ $DISABLE_CHECKBASH ]] || validateCommand "$dir" "$CHECKBASH" "bash" "$CHECKBASH_OPTIONS" 
+    [[ $DISABLE_CHECKSH ]]   || validateCommand "$dir" "$CHECKSH" "sh" "$CHECKSH_OPTIONS"
+    [[ $DISABLE_YAML ]]      || validateCommand "$dir" "$YAML" "yml" "$YAML_OPTIONS" "> /dev/null"
+}
+
+
+
+#
+# Perform publish 
+#
+function publishCommand()
+{
+    local dir="$1"
+    local cmd="$2"
+    local extension="$3"
+    local options="$4"
+    local output="$5"
+    local counter=0
+
+    if hash "$cmd" 2>/dev/null; then
+        printf "\n *.$extension using $cmd"
+        for filename in $( find "$dir/" -not -path '*/node_modules/*' -type f -name \*.$extension ); do
+            if [[ $optDryRun ]]; then
+                printf "\n%s" "$cmd $options $filename $output $filename"
+            else
+                assert 0 "$cmd $options $filename $output $filename" "$cmd failed: $filename"
+            fi
+            counter=$(( counter + 1 )) 
+        done
+        printf " ($counter)"
+    else
+        printf "\n *.$extension (skipping - $cmd not installed)"
+    fi
+}
+
+
+
+#
+# Publish all
+#
+publish()
+{
+    local from="$1"
+    local to="$2"
+ 
+    if [ -z "$from" ]; then
+        printf "\n$MSG_FAILED Publish with empty source directory: '$from'\n"
+        exit 2
+    elif [ ! -d "$from" ]; then
+        printf "\n$MSG_FAILED Publish without valid from directory: '$from'\n"
+        exit 2
+    elif [ -z "$to" ]; then
+        printf "\n$MSG_FAILED Publish with empty target directory: '$to'\n"
+        exit 2
+    elif [ ! -d $( dirname "$to" ) ]; then
+        printf "\n$MSG_FAILED Publish to nonexisting directory: '$to'\n"
+        exit 2
+    fi
+
+    if [[ $optDryRun ]]; then
+        printf "\nrsync -a --delete %s %s" "$from/" "$to/"
+    else
+        rsync -a --delete "$from/" "$to/"
+    fi
+    
+    [[ $DISABLE_HTML_MINIFIER ]] || publishCommand "$to" "$HTML_MINIFIER" "html" "$HTML_MINIFIER_CONFIG $HTML_MINIFIER_OPTIONS" "--output" 
+    [[ $DISABLE_CLEANCSS ]]      || publishCommand "$to" "$CLEANCSS" "css" "$CLEANCSS_OPTIONS" "-o" 
+    [[ $DISABLE_UGLIFYJS ]]      || publishCommand "$to" "$UGLIFYJS" "js" "$UGLIFYJS_OPTIONS" "-o"
+    [[ $DISABLE_PHPMINIFY ]]     || publishCommand "$to" "$PHPMINIFY" "php" "$PHPMINIFY_OPTIONS" "> /tmp/$$; mv /tmp/$$ "
+    #publishCommand "$to" "$UGLIFYPHP" "php" "" "--output" 
+
+    publishChmod "$to"
+}
+
+
+
+#
+# Process options
+#
+while (( $# ))
+do
+    case "$1" in
+        
+        --check | -c)
+            checkInstalledValidateTools
+            exit 0
+            ;;
+
+        --publish | -p)
+            optPublish="yes"
+            shift
+            ;;
+
+        --publish-to)
+            DBW_PUBLISH_TO="$2"
+            if [ ! -d $( dirname "$DBW_PUBLISH_TO" ) ]; then
+                badUsage "$MSG_FAILED --publish-to '$DBW_PUBLISH_TO' is not a valid directory."
+                exit 2
+            fi
+                
+            shift
+            shift
+            ;;
+
+        --course-repo)
+            DBW_COURSE_DIR="$2"
+            if [ ! -d "$DBW_COURSE_DIR" ]; then
+                badUsage "$MSG_FAILED --course-repo '$DBW_COURSE_DIR' is not a valid directory."
+                exit 2
+            fi
+
+            # Get the name of the course as $DBW_COURSE
+            sourceCourseRepoFile
+                
+            shift
+            shift
+            ;;
+
+        --only)
+            optOnly="$2"
+            shift
+            shift
+            ;;
+
+        --dry | -d)
+            optDryRun="yes"
+            shift
+            ;;
+
+        --help | -h)
+            usage
+            exit 0
+        ;;
+        
+        --version | -v)
+            version
+            exit 0
+        ;;
+                
+        --selfupdate)
+            selfupdate dbwebb-validate
+            exit 0
+        ;;
+                
+        *)
+            if [[ $command ]]; then
+                badUsage "$MSG_FAILED Too many options/items and/or option not recognized."
+                exit 2
+            else
+                command=$1
+            fi
+            shift
+        ;;
+        
+    esac
+done
+
+
+
+#
+# Validate (and publish) the path choosen
+#
+dir="$( getPathToDirectoryFor "$command" )"
+if [ ! -d "$dir" ]; then
+    badUsage "$MSG_FAILED Directory '$command' is not a valid directory."
+    exit 2
+fi
+
+
+
+#
+# Source validate config file
+#
+[[ $DBW_VALIDATE_CONFIGFILE ]] && . "$DBW_VALIDATE_CONFIGFILE"
+
+
+
+printf "Validating '%s'." "$dir"
+setDefaultConfigFiles
+validate "$dir" 
+
+if [[ $optPublish ]]; then
+    if [ -z "$DBW_PUBLISH_TO" ]; then
+        printf "\n$MSG_FAILED Missing target dir for publish, not supported.\n"
+        exit 2
+    fi
+    
+    if [ ! -d $( dirname "$DBW_PUBLISH_TO" ) ]; then
+        printf "\n$MSG_FAILED Target dir for publish is not a valid directory '%s'.\n" "$DBW_PUBLISH_TO"
+        exit 2
+    fi
+    
+    printf "\nPublishing to '%s'." "$DBW_PUBLISH_TO"
+    publish "$dir" "$DBW_PUBLISH_TO"
+fi
+
+assertResults
